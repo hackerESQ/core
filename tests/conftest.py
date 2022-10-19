@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager
 import functools
+import itertools
 from json import JSONDecoder, loads
 import logging
 import sqlite3
@@ -845,6 +846,16 @@ def enable_statistics():
 
 
 @pytest.fixture
+def enable_statistics_table_validation():
+    """Fixture to control enabling of recorder's statistics table validation.
+
+    To enable statistics table validation, tests can be marked with:
+    @pytest.mark.parametrize("enable_statistics_table_validation", [True])
+    """
+    return False
+
+
+@pytest.fixture
 def enable_nightly_purge():
     """Fixture to control enabling of recorder's nightly purge job.
 
@@ -865,13 +876,23 @@ def recorder_config():
 
 
 @pytest.fixture
-def hass_recorder(enable_nightly_purge, enable_statistics, hass_storage):
+def hass_recorder(
+    enable_nightly_purge,
+    enable_statistics,
+    enable_statistics_table_validation,
+    hass_storage,
+):
     """Home Assistant fixture with in-memory recorder."""
     original_tz = dt_util.DEFAULT_TIME_ZONE
 
     hass = get_test_home_assistant()
     nightly = recorder.Recorder.async_nightly_tasks if enable_nightly_purge else None
     stats = recorder.Recorder.async_periodic_statistics if enable_statistics else None
+    stats_validate = (
+        recorder.statistics.validate_db_schema
+        if enable_statistics_table_validation
+        else itertools.repeat(set())
+    )
     with patch(
         "homeassistant.components.recorder.Recorder.async_nightly_tasks",
         side_effect=nightly,
@@ -879,6 +900,10 @@ def hass_recorder(enable_nightly_purge, enable_statistics, hass_storage):
     ), patch(
         "homeassistant.components.recorder.Recorder.async_periodic_statistics",
         side_effect=stats,
+        autospec=True,
+    ), patch(
+        "homeassistant.components.recorder.migration.statistics_validate_db_schema",
+        side_effect=stats_validate,
         autospec=True,
     ):
 
@@ -920,13 +945,21 @@ async def _async_init_recorder_component(hass, add_config=None):
 
 @pytest.fixture
 async def async_setup_recorder_instance(
-    hass_fixture_setup, enable_nightly_purge, enable_statistics
+    hass_fixture_setup,
+    enable_nightly_purge,
+    enable_statistics,
+    enable_statistics_table_validation,
 ) -> AsyncGenerator[SetupRecorderInstanceT, None]:
     """Yield callable to setup recorder instance."""
     assert not hass_fixture_setup
 
     nightly = recorder.Recorder.async_nightly_tasks if enable_nightly_purge else None
     stats = recorder.Recorder.async_periodic_statistics if enable_statistics else None
+    stats_validate = (
+        recorder.statistics.validate_db_schema
+        if enable_statistics_table_validation
+        else itertools.repeat(set())
+    )
     with patch(
         "homeassistant.components.recorder.Recorder.async_nightly_tasks",
         side_effect=nightly,
@@ -934,6 +967,10 @@ async def async_setup_recorder_instance(
     ), patch(
         "homeassistant.components.recorder.Recorder.async_periodic_statistics",
         side_effect=stats,
+        autospec=True,
+    ), patch(
+        "homeassistant.components.recorder.migration.statistics_validate_db_schema",
+        side_effect=stats_validate,
         autospec=True,
     ):
 
